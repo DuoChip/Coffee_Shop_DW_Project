@@ -2,22 +2,46 @@ import pandas as pd
 from mlxtend.frequent_patterns import apriori, association_rules
 
 
+def add_basket_id(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Tạo basket_id tạm thời vì transaction_id hiện tại chỉ là ID từng dòng.
+    Gom các dòng có cùng store_id + date_skey + time_skey thành 1 basket.
+    """
+    df = df.copy()
+
+    required_cols = ["store_id", "date_skey", "time_skey"]
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"Thiếu cột để tạo basket_id: {missing}")
+
+    df["basket_id"] = (
+        df["store_id"].astype(str) + "_" +
+        df["date_skey"].astype(str) + "_" +
+        df["time_skey"].astype(str)
+    )
+
+    return df
+
+
 def build_basket(df: pd.DataFrame, product_col: str = "product_detail") -> pd.DataFrame:
     """
-    Tạo basket theo transaction_id x product_detail
+    Tạo basket theo basket_id x product_detail/product_type/product_category.
     """
-    required_cols = ["transaction_id", product_col, "transaction_qty"]
+    df = add_basket_id(df)
+
+    required_cols = ["basket_id", product_col, "transaction_qty"]
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
         raise ValueError(f"Thiếu cột để build basket: {missing}")
 
     basket = (
-        df.groupby(["transaction_id", product_col])["transaction_qty"]
+        df.groupby(["basket_id", product_col])["transaction_qty"]
           .sum()
           .unstack(fill_value=0)
     )
 
-    basket = (basket > 0).astype(int)
+    basket = (basket > 0).astype(bool)
+
     return basket
 
 
@@ -35,6 +59,14 @@ def run_apriori(
     - association rules
     """
     basket = build_basket(df, product_col=product_col)
+
+    if basket.empty:
+        return basket, pd.DataFrame(), pd.DataFrame()
+
+    max_items_per_basket = basket.sum(axis=1).max()
+
+    if max_items_per_basket < 2:
+        return basket, pd.DataFrame(), pd.DataFrame()
 
     frequent_itemsets = apriori(
         basket,
@@ -59,8 +91,14 @@ def run_apriori(
     if rules.empty:
         return basket, frequent_itemsets, rules
 
-    rules["antecedents_str"] = rules["antecedents"].apply(lambda x: ", ".join(sorted(list(x))))
-    rules["consequents_str"] = rules["consequents"].apply(lambda x: ", ".join(sorted(list(x))))
+    rules["antecedents_str"] = rules["antecedents"].apply(
+        lambda x: ", ".join(map(str, sorted(list(x))))
+    )
+
+    rules["consequents_str"] = rules["consequents"].apply(
+        lambda x: ", ".join(map(str, sorted(list(x))))
+    )
+
     rules["rule"] = rules["antecedents_str"] + " → " + rules["consequents_str"]
 
     rules = rules.sort_values(
@@ -76,8 +114,14 @@ def get_top_rules(rules: pd.DataFrame, top_n: int = 10) -> pd.DataFrame:
         return rules
 
     cols = [
-        "rule", "support", "confidence", "lift",
-        "antecedents_str", "consequents_str"
+        "rule",
+        "support",
+        "confidence",
+        "lift",
+        "antecedents_str",
+        "consequents_str"
     ]
+
     available_cols = [c for c in cols if c in rules.columns]
+
     return rules[available_cols].head(top_n).copy()
