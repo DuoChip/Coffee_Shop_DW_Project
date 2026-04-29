@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-
+#  streamlit run mining_app/app.py
 from src.data_loader import build_analysis_dataframe
 from src.feature_engineering import prepare_analysis_data, build_store_day_features
 from src.association import run_apriori, get_top_rules
